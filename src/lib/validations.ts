@@ -49,6 +49,11 @@ export const memberEmailSchema = z.object({
   email: emailSchema,
 });
 
+export const userSearchQuerySchema = z.object({
+  q: z.string().trim().min(2).max(100),
+  projectId: z.string().min(1),
+});
+
 export const memberTaskStatusSchema = z
   .object({ status: taskStatusSchema })
   .strict();

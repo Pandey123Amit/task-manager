@@ -30,6 +30,7 @@ import {
 import { useSession } from "@/components/session-context";
 import { Role } from "@/generated/prisma/enums";
 import { StatusBadge } from "@/components/task-badges";
+import { useDebounce } from "@/hooks/use-debounce";
 
 type ProjectDetail = {
   id: string;
@@ -73,6 +74,16 @@ export default function ProjectDetailPage() {
   const [saving, setSaving] = React.useState(false);
   const [memberEmail, setMemberEmail] = React.useState("");
   const [addingMember, setAddingMember] = React.useState(false);
+  const [noMemberFound, setNoMemberFound] = React.useState(false);
+  const [memberSuggestions, setMemberSuggestions] = React.useState<
+    Array<{
+      id: string;
+      name: string;
+      email: string;
+      role: Role;
+    }>
+  >([]);
+  const [memberSearchLoading, setMemberSearchLoading] = React.useState(false);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -92,6 +103,79 @@ export default function ProjectDetailPage() {
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  const debouncedMemberQuery = useDebounce(memberEmail, 200);
+
+  React.useEffect(() => {
+    const q = debouncedMemberQuery.trim();
+
+    if (!isAdmin || q.length < 2) {
+      setMemberSuggestions([]);
+      setNoMemberFound(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    setMemberSearchLoading(true);
+
+    (async () => {
+      try {
+        const params = new URLSearchParams({ q, projectId: id });
+
+        const res = await api.get<{
+          users: Array<{
+            id: string;
+            name: string;
+            email: string;
+            role: Role;
+          }>;
+        }>(`/api/users/search?${params.toString()}`);
+
+        if (!cancelled) {
+          setMemberSuggestions(res.data.users);
+          setNoMemberFound(res.data.users.length === 0);
+        }
+      } catch {
+        if (!cancelled) {
+          setMemberSuggestions([]);
+          setNoMemberFound(true);
+        }
+      } finally {
+        if (!cancelled) {
+          setMemberSearchLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedMemberQuery, id, isAdmin]);
+
+  async function addMemberByEmail(email: string) {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) return;
+    setAddingMember(true);
+    setMemberSuggestions([]);
+    try {
+      await api.post(`/api/projects/${id}/members`, {
+        email: trimmed,
+      });
+      toast.success("Member added");
+      setMemberEmail("");
+      await load();
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, "Could not add member"));
+    } finally {
+      setAddingMember(false);
+    }
+  }
+
+  async function addMember(e: React.FormEvent) {
+    e.preventDefault();
+    await addMemberByEmail(memberEmail);
+  }
 
   function openEdit() {
     if (!project) return;
@@ -128,24 +212,6 @@ export default function ProjectDetailPage() {
       router.refresh();
     } catch (e) {
       toast.error(getApiErrorMessage(e, "Delete failed"));
-    }
-  }
-
-  async function addMember(e: React.FormEvent) {
-    e.preventDefault();
-    if (!memberEmail.trim()) return;
-    setAddingMember(true);
-    try {
-      await api.post(`/api/projects/${id}/members`, {
-        email: memberEmail.trim(),
-      });
-      toast.success("Member added");
-      setMemberEmail("");
-      await load();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, "Could not add member"));
-    } finally {
-      setAddingMember(false);
     }
   }
 
@@ -224,19 +290,62 @@ export default function ProjectDetailPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {isAdmin ? (
-              <form onSubmit={addMember} className="flex flex-col gap-2 sm:flex-row">
-                <Input
-                  type="email"
-                  placeholder="user@company.com"
-                  value={memberEmail}
-                  onChange={(e) => setMemberEmail(e.target.value)}
-                  className="flex-1"
-                />
-                <Button type="submit" disabled={addingMember}>
-                  <UserPlus className="size-4" />
-                  Add
-                </Button>
-              </form>
+              <div className="space-y-2">
+                <form
+                  onSubmit={addMember}
+                  className="flex flex-col gap-2 sm:flex-row"
+                >
+                  <Input
+                    type="text"
+                    autoComplete="off"
+                    placeholder="Search name or email…"
+                    value={memberEmail}
+                    onChange={(e) => setMemberEmail(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button type="submit" disabled={addingMember}>
+                    <UserPlus className="size-4" />
+                    Add by email
+                  </Button>
+                </form>
+                <p className="text-xs text-muted-foreground">
+                  Type at least 2 characters — matching users appear below, or
+                  submit the full email to invite.
+                </p>
+                {memberSearchLoading ? (
+                  <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="size-3 animate-spin" />
+                    Searching…
+                  </p>
+                ) : null}
+                {noMemberFound && !memberSearchLoading ? (
+                  <p className="text-sm text-muted-foreground px-1">
+                    No member found
+                  </p>
+                ) : null}
+                {memberSuggestions.length > 0 ? (
+                  <ul
+                    className="max-h-48 overflow-auto rounded-md border border-border bg-muted/30 text-sm"
+                    role="listbox"
+                  >
+                    {memberSuggestions.map((u) => (
+                      <li key={u.id} className="border-b border-border last:border-0">
+                        <button
+                          type="button"
+                          disabled={addingMember}
+                          className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-accent/60 disabled:opacity-50"
+                          onClick={() => void addMemberByEmail(u.email)}
+                        >
+                          <span className="font-medium">{u.name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {u.email} · {u.role}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
             ) : null}
             <Table>
               <TableHeader>

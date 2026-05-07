@@ -103,6 +103,12 @@ All JSON APIs expect appropriate auth cookie unless noted.
 | `POST` | `/api/projects/:id/members` | Body `{ email }` — Admin |
 | `DELETE` | `/api/projects/:id/members/:userId` | Admin (cannot remove owner) |
 
+### Users (admin)
+
+| Method | Path | Notes |
+|--------|------|-------|
+| `GET` | `/api/users/search` | Query: `q` (min 2 chars), `projectId` — suggests users not already on the project (name/email match) |
+
 ### Tasks
 
 | Method | Path | Notes |
